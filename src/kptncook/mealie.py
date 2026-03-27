@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import UUID4, BaseModel, ConfigDict, Field, ValidationError, parse_obj_as
+from pydantic import UUID4, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from .config import settings
 from .ingredient_groups import iter_ingredient_groups
@@ -73,7 +73,6 @@ class RecipeIngredient(BaseModel):
     note: str | None = None
     unit: RecipeUnit | None
     food: RecipeFood | None
-    disable_amount: bool = True
     quantity: float | None = 1
 
 
@@ -81,6 +80,7 @@ class RecipeSummary(BaseModel):
     id: UUID4 | None = None
 
     user_id: UUID4 | None = Field(None, alias="userId")
+    household_id: UUID4 | None = Field(None, alias="householdId")
     group_id: UUID4 | None = Field(None, alias="groupId")
 
     name: str | None = None
@@ -172,10 +172,10 @@ class MealieApiClient:
 
     @property
     def logged_in(self):
-        return "access_token" in self.headers
+        return "authorization" in self.headers
 
     def to_url(self, path):
-        return f"{self.base_url}{path}"
+        return f"{str(self.base_url).rstrip('/')}{path}"
 
     def __getattr__(self, name):
         """
@@ -267,7 +267,11 @@ class MealieApiClient:
 
     def _post_recipe_trunk_and_get_slug(self, recipe_name):
         data = {"name": recipe_name}
-        r = self.post("/recipes", data=json.dumps(data))
+        r = self.post(
+            "/recipes",
+            content=json.dumps(data),
+            headers={"Content-Type": "application/json"},
+        )
         r.raise_for_status()
         slug = r.json()
         return slug
@@ -275,9 +279,12 @@ class MealieApiClient:
     def _scrape_image_for_recipe(self, recipe, slug):
         if not recipe.image_url:
             return
-        json_image_url = json.dumps({"url": recipe.image_url})
         scrape_image_path = f"/recipes/{slug}/image"
-        r = self.post(scrape_image_path, data=json_image_url)
+        r = self.post(
+            scrape_image_path,
+            content=json.dumps({"url": recipe.image_url}),
+            headers={"Content-Type": "application/json"},
+        )
         r.raise_for_status()
 
     def _update_user_and_group_id(self, recipe, slug):
@@ -285,9 +292,9 @@ class MealieApiClient:
         r = self.get(recipe_detail_path)
         r.raise_for_status()
         recipe_details = r.json()
-        update_attributes = ["id", "userId", "groupId"]
+        update_attributes = ["id", "userId", "householdId", "groupId"]
         updated_details = {k: recipe_details[k] for k in update_attributes}
-        recipe = RecipeWithImage(**(recipe.dict() | updated_details))
+        recipe = RecipeWithImage(**(recipe.model_dump() | updated_details))
         return recipe
 
     def _get_page(self, endpoint_name, page_num, per_page=50):
@@ -309,13 +316,17 @@ class MealieApiClient:
         return all_items
 
     def _create_item(self, endpoint_name, item):
-        r = self.post(f"/{endpoint_name}", data=item.json())
+        r = self.post(
+            f"/{endpoint_name}",
+            content=item.model_dump_json(),
+            headers={"Content-Type": "application/json"},
+        )
         r.raise_for_status()
         return r.json()
 
     def _create_item_name_to_item_lookup(self, endpoint_name, model_class, items):
-        existing_items = parse_obj_as(
-            set[model_class], self._get_all_items(endpoint_name)
+        existing_items = TypeAdapter(set[model_class]).validate_python(
+            self._get_all_items(endpoint_name)
         )
         items_to_create = items - existing_items
         for item in items_to_create:
@@ -358,7 +369,11 @@ class MealieApiClient:
 
     def _update_recipe(self, recipe, slug):
         recipe_detail_path = f"/recipes/{slug}"
-        r = self.put(recipe_detail_path, data=recipe.json())
+        r = self.put(
+            recipe_detail_path,
+            content=recipe.model_dump_json(),
+            headers={"Content-Type": "application/json"},
+        )
         r.raise_for_status()
         return Recipe.model_validate(r.json())
 
