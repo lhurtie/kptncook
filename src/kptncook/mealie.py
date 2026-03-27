@@ -208,6 +208,32 @@ class MealieApiClient:
     def login_with_token(self, token: str):
         self.headers = {"authorization": f"Bearer {token}"}
 
+    def upload_cover_image(self, recipe_slug: str, image_url: str) -> bool:
+        """Download image from URL and upload it as cover image to Mealie."""
+        try:
+            r = httpx.get(image_url, follow_redirects=True, timeout=30)
+            r.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("Could not download cover image for %s: %s", recipe_slug, exc)
+            return False
+
+        content_type = r.headers.get("content-type", "image/jpeg")
+        extension = content_type.split("/")[-1].split(";")[0].strip()
+        if extension == "jpeg":
+            extension = "jpg"
+
+        try:
+            upload = self.put(
+                f"/recipes/{recipe_slug}/image",
+                files={"image": (f"cover.{extension}", r.content, content_type)},
+                data={"extension": extension},
+            )
+            upload.raise_for_status()
+            return True
+        except httpx.HTTPError as exc:
+            logger.warning("Could not upload cover image for %s: %s", recipe_slug, exc)
+            return False
+
     def upload_asset(self, recipe_slug, image: Image):
         # download image
         r = httpx.get(image.url, follow_redirects=True)

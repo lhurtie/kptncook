@@ -571,6 +571,53 @@ def download_all(
     rprint(f"[green]Saved {total_saved} recipes to local repository.[/green]")
 
 
+@cli.command(name="repair-images")
+def repair_images():
+    """
+    Find Mealie recipes without a cover image and upload it from KptnCook.
+    """
+    try:
+        client = get_mealie_client()
+    except Exception as e:
+        rprint(f"[red]Could not connect to Mealie: {e}[/red]")
+        sys.exit(1)
+
+    # Build lookup: kptncook_id -> image_url from local repo
+    local_recipes = get_kptncook_recipes_from_repository()
+    id_to_image: dict[str, str] = {}
+    for recipe in local_recipes:
+        image_url = recipe.get_image_url(settings.kptncook_api_key)
+        if image_url:
+            id_to_image[recipe.id.oid] = image_url
+
+    # Fetch all Mealie recipes and filter those without image
+    all_mealie = client.get_all_recipes()
+    rprint(f"Checking {len(all_mealie)} Mealie recipes for missing cover images...")
+
+    fixed = 0
+    skipped = 0
+    for summary in all_mealie:
+        if summary.image:
+            continue
+        full = client.get_via_slug(summary.slug)
+        kptncook_id = full.extras.get("kptncook_id")
+        if not kptncook_id:
+            skipped += 1
+            continue
+        image_url = id_to_image.get(kptncook_id)
+        if not image_url:
+            skipped += 1
+            continue
+        ok = client.upload_cover_image(summary.slug, image_url)
+        if ok:
+            fixed += 1
+            logger.debug("Fixed image for %s", summary.name)
+
+    rprint(f"[green]Fixed {fixed} cover images.[/green]")
+    if skipped:
+        rprint(f"[yellow]Skipped {skipped} recipes (no kptncook_id or no image in local repo).[/yellow]")
+
+
 @cli.command(name="sync")
 def sync():
     """
