@@ -495,6 +495,82 @@ def sync_with_mealie():
     rprint(f"Created {len(created_slugs)} recipes")
 
 
+@cli.command(name="download-all")
+def download_all(
+    rtype: str | None = typer.Option(
+        None,
+        "--rtype",
+        help="Comma-separated recipe types to include, e.g. 'Veggie,Vegan,Fish'.",
+    ),
+    batch_size: int = typer.Option(
+        50,
+        "--batch-size",
+        help="Number of recipe summaries to resolve per API request.",
+    ),
+):
+    """
+    Download all recipes from KptnCook discovery lists and save to local repository.
+    """
+    client = KptnCookClient()
+    rprint("Fetching discovery lists...")
+    try:
+        screen = client.get_discovery_screen(preferences=None)
+    except httpx.HTTPError as exc:
+        rprint(f"[red]Failed to fetch discovery screen: {exc}[/red]")
+        sys.exit(1)
+
+    lists = screen.get("lists", []) if isinstance(screen, dict) else []
+    seen_ids: set[str] = set()
+    summaries = []
+    for lst in lists:
+        list_type = lst.get("listType")
+        list_id = lst.get("id")
+        try:
+            if list_type in ("latest", "recommended"):
+                items = client.get_discovery_list(list_type=list_type, preferences=None)
+            elif list_type in ("automated", "curated") and list_id and list_id != "-":
+                items = client.get_discovery_list(
+                    list_type=list_type, list_id=list_id, preferences=None
+                )
+            else:
+                continue
+        except httpx.HTTPError:
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            rid = item.get("id")
+            if rid and rid not in seen_ids:
+                seen_ids.add(rid)
+                summaries.append(item)
+
+    rprint(f"Found {len(summaries)} unique recipe summaries across all lists.")
+
+    if rtype is not None:
+        allowed = {t.strip() for t in rtype.split(",")}
+        summaries = [s for s in summaries if s.get("rtype") in allowed]
+        rprint(f"After rtype filter ({rtype}): {len(summaries)} summaries.")
+
+    fs_repo = RecipeRepository(settings.root)
+    total_saved = 0
+    batches = [summaries[i : i + batch_size] for i in range(0, len(summaries), batch_size)]
+    for i, batch in enumerate(batches, 1):
+        rprint(f"Fetching batch {i}/{len(batches)} ({len(batch)} recipes)...")
+        try:
+            recipes = client.resolve_recipe_summaries(batch)
+        except httpx.HTTPError as exc:
+            rprint(f"[yellow]Batch {i} failed: {exc}[/yellow]")
+            continue
+        complete = [r for r in recipes if r.data.get("steps")]
+        skipped = len(recipes) - len(complete)
+        if skipped:
+            rprint(f"  [yellow]Skipped {skipped} incomplete recipes (no steps).[/yellow]")
+        fs_repo.add_list(complete)
+        total_saved += len(complete)
+
+    rprint(f"[green]Saved {total_saved} recipes to local repository.[/green]")
+
+
 @cli.command(name="sync")
 def sync():
     """

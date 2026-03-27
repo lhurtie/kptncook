@@ -280,12 +280,15 @@ class MealieApiClient:
         if not recipe.image_url:
             return
         scrape_image_path = f"/recipes/{slug}/image"
-        r = self.post(
-            scrape_image_path,
-            content=json.dumps({"url": recipe.image_url}),
-            headers={"Content-Type": "application/json"},
-        )
-        r.raise_for_status()
+        try:
+            r = self.post(
+                scrape_image_path,
+                content=json.dumps({"url": recipe.image_url}),
+                headers={"Content-Type": "application/json"},
+            )
+            r.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("Skipping cover image for recipe %s: %s", slug, exc)
 
     def _update_user_and_group_id(self, recipe, slug):
         recipe_detail_path = f"/recipes/{slug}"
