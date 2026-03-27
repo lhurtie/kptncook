@@ -130,6 +130,11 @@ def list_kptncook_dailies(
         "--subscribed/--not-subscribed",
         help="Filter daily recipes by subscription status.",
     ),
+    rtype: str | None = typer.Option(
+        None,
+        "--rtype",
+        help="Comma-separated list of recipe types to include, e.g. 'Veggie,Vegan,Fish'.",
+    ),
     save: bool = typer.Option(
         False,
         "--save",
@@ -157,6 +162,9 @@ def list_kptncook_dailies(
     except httpx.HTTPError as exc:
         rprint(f"[red]Request failed: {exc}[/red]")
         sys.exit(1)
+    if rtype is not None:
+        allowed = {t.strip() for t in rtype.split(",")}
+        recipes = [r for r in recipes if r.data.get("rtype") in allowed]
     if not recipes:
         rprint("No recipes found.")
         return
