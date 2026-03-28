@@ -262,12 +262,14 @@ class KptnCookClient:
         Get a list of favorite recipes.
         """
         params = self._standard_query_params()
-        response = self.get("/favorites", params=params)
+        response = self.get("/accounts/me/favorites", params=params)
         response.raise_for_status()
         try:
             payload = response.json()
         except ValueError as exc:
             raise ValueError("Favorites response was not valid JSON") from exc
+        if isinstance(payload, dict) and "favorites" in payload:
+            return [f for f in payload["favorites"] if not f.get("deleted")]
         favorites, found, invalid = _extract_favorites_payload(payload)
         if found and not invalid:
             return favorites
